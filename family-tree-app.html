@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家系図アプリ</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --card-bg: #ffffff;
+    --border: #ddd8ce;
+    --text-primary: #2b2a26;
+    --text-secondary: #8a8579;
+    --male: #3f6b8c;
+    --male-bg: #e6eef4;
+    --female: #a04a63;
+    --female-bg: #f6e7ec;
+    --link: #c9c3b6;
+    --accent: #b5723a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic", -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    overflow: hidden;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  #login-screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; background: var(--bg);
+  }
+  #login-screen h1 { font-size: 20px; margin: 0; }
+  #login-screen p { color: var(--text-secondary); font-size: 13px; margin: 0; }
+  .primary-btn {
+    background: var(--text-primary); color: #fff; border: none;
+    border-radius: 10px; padding: 12px 24px; font-size: 14px; font-weight: 600;
+  }
+  #family-screen {
+    position: fixed; inset: 0; display: none; flex-direction: column;
+    align-items: center; padding: 60px 20px; background: var(--bg); overflow-y: auto;
+  }
+  #family-screen .box {
+    width: 100%; max-width: 360px; background: var(--card-bg);
+    border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 16px;
+  }
+  #family-screen h2 { font-size: 15px; margin: 0 0 12px; }
+  #family-screen input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; margin-bottom: 10px;
+  }
+  #family-screen .family-item {
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;
+  }
+  #main-screen { display: none; }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; padding: 12px 20px;
+    background: var(--bg); border-bottom: 1px solid var(--border); z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  #header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  #header p { font-size: 11px; color: var(--text-secondary); margin: 2px 0 0; }
+  #controls { display: flex; gap: 8px; }
+  #controls button {
+    border: 1px solid var(--border); background: var(--card-bg);
+    border-radius: 8px; width: 32px; height: 32px; font-size: 15px; color: var(--text-primary);
+  }
+  #tree-container { position: absolute; top: 60px; left: 0; right: 0; bottom: 0; }
+  svg { width: 100%; height: 100%; cursor: grab; }
+  svg:active { cursor: grabbing; }
+  .link { fill: none; stroke: var(--link); stroke-width: 1.5px; }
+  .node-card { cursor: pointer; }
+  .node-card rect { stroke-width: 1px; }
+  .node-card .avatar { font-size: 20px; }
+  .node-card .name { font-size: 13px; font-weight: 600; fill: var(--text-primary); }
+  .node-card .years { font-size: 11px; fill: var(--text-secondary); }
+  .add-fab {
+    position: fixed; right: 20px; bottom: 24px; width: 52px; height: 52px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: none; font-size: 26px; z-index: 12;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.15); z-index: 15; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  #overlay.open { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg);
+    border-top: 1px solid var(--border); border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.08); padding: 20px 24px 28px;
+    transform: translateY(100%); transition: transform .25s ease; z-index: 20;
+    max-width: 480px; margin: 0 auto; max-height: 80vh; overflow-y: auto;
+  }
+  .sheet.open { transform: translateY(0); }
+  .sheet .close-btn { position: absolute; top: 14px; right: 16px; border: none; background: none; font-size: 18px; color: var(--text-secondary); }
+  .sheet label { display: block; font-size: 12px; color: var(--text-secondary); margin: 12px 0 4px; }
+  .sheet input, .sheet select, .sheet textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit;
+  }
+  .sheet textarea { resize: vertical; min-height: 60px; }
+  .sheet .row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .avatar-lg { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .sheet h2 { margin: 0 0 4px; font-size: 17px; }
+  .sheet .meta { font-size: 13px; color: var(--text-secondary); margin: 0; }
+  .sheet .actions { display: flex; gap: 10px; margin-top: 18px; }
+  .sheet .actions button { flex: 1; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--card-bg); }
+  .sheet .actions .danger { color: #b03030; border-color: #e8c4c4; }
+  .invite-code-display { font-size: 24px; letter-spacing: 4px; font-weight: 700; text-align: center; padding: 14px; background: var(--bg); border-radius: 10px; margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <h1>家系図アプリ</h1>
+  <p>Googleアカウントでログインしてください</p>
+  <button class="primary-btn" onclick="signIn()">Googleでログイン</button>
+</div>
+
+<div id="family-screen">
+  <div class="box">
+    <h2>家系図を作成する</h2>
+    <input id="new-family-name" placeholder="例: 田中家">
+    <button class="primary-btn" style="width:100%" onclick="createFamily()">作成する</button>
+  </div>
+  <div class="box">
+    <h2>招待コードで参加する</h2>
+    <input id="join-code" placeholder="6桁のコード" maxlength="6">
+    <button class="primary-btn" style="width:100%" onclick="joinFamily()">参加する</button>
+  </div>
+  <div class="box">
+    <h2>参加中の家系図</h2>
+    <div id="family-list"></div>
+  </div>
+</div>
+
+<div id="main-screen">
+  <div id="header">
+    <div>
+      <h1 id="family-title">家系図</h1>
+      <p>ドラッグで移動・ピンチで拡大縮小・タップで詳細</p>
+    </div>
+    <div id="controls">
+      <button onclick="zoomBy(1.3)">＋</button>
+      <button onclick="zoomBy(0.77)">－</button>
+      <button onclick="openInvitePanel()">招待</button>
+      <button onclick="signOutAndReset()">⎋</button>
+    </div>
+  </div>
+  <div id="tree-container"></div>
+  <button class="add-fab" onclick="openAddPanel()">＋</button>
+</div>
+
+<div id="overlay" onclick="closeAllSheets()"></div>
+
+<div class="sheet" id="detail-sheet">
+  <button class="close-btn" onclick="closeAllSheets()">✕</button>
+  <div class="row">
+    <div id="panel-avatar" class="avatar-lg"></div>
+    <div>
+      <h2 id="panel-name"></h2>
+      <p class="meta" id="panel-meta"></p>
+    </div>
+  </div>
+  <label>メモ</label>
+  <textarea id="panel-note" readonly></textarea>
+  <div class="actions">
+    <button onclick="startEdit()">編集する</button>
+    <button class="danger" onclick="deletePerson()">削除する</button>
+  </div>
+</div>
+
+<div class="sheet" id="edit-sheet">
+  <button class="close-btn" onclick="closeAllSheets()">✕</button>
+  <h2 id="edit-title">人物を追加</h2>
+  <label>名前</label>
+  <input id="edit-name">
+  <label>性別</label>
+  <select id="edit-gender"><option value="M">男性</option><option value="F">女性</option></select>
+  <label>生年</label>
+  <input id="edit-born" type="number" placeholder="例: 1980">
+  <label>親1(任意)</label>
+  <select id="edit-parent1"><option value="">なし</option></select>
+  <label>親2(任意)</label>
+  <select id="edit-parent2"><option value="">なし</option></select>
+  <label>配偶者(任意)</label>
+  <select id="edit-spouse"><option value="">なし</option></select>
+  <label>メモ</label>
+  <textarea id="edit-note"></textarea>
+  <div class="actions">
+    <button class="primary-btn" style="border:none;color:#fff;background:var(--text-primary)" onclick="savePerson()">保存する</button>
+  </div>
+</div>
+
+<div class="sheet" id="invite-sheet">
+  <button class="close-btn" onclick="closeAllSheets()">✕</button>
+  <h2>家族を招待</h2>
+  <p class="meta">このコードを共有すると、相手が家系図の編集に参加できます。</p>
+  <div class="invite-code-display" id="invite-code-text">------</div>
+  <div class="actions">
+    <button onclick="generateInviteCode()">新しいコードを発行</button>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// Firebase設定 — 買い物リストアプリと同じプロジェクトのconfigに置き換えてください
+// =====================================================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyDZjqEqpvkyjlRujsU1Pg-o-AD23Xf2dRc",
+    authDomain: "family-tree-62bc9.firebaseapp.com",
+    projectId: "family-tree-62bc9",
+    storageBucket: "family-tree-62bc9.firebasestorage.app",
+    messagingSenderId: "365518144858",
+    appId: "1:365518144858:web:1e49e5e6c0442c1e5c5f63"
+  };
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let currentUser = null;
+let currentFamilyId = null;
+let peopleCache = [];
+let unsubscribePeople = null;
+let editingPersonId = null;
+
+function signIn() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(err => alert("ログインに失敗しました: " + err.message));
+}
+function signOutAndReset() {
+  if (unsubscribePeople) unsubscribePeople();
+  auth.signOut();
+}
+auth.onAuthStateChanged(user => {
+  currentUser = user;
+  if (user) {
+    document.getElementById("login-screen").style.display = "none";
+    showFamilyScreen();
+  } else {
+    document.getElementById("login-screen").style.display = "flex";
+    document.getElementById("family-screen").style.display = "none";
+    document.getElementById("main-screen").style.display = "none";
+  }
+});
+
+async function showFamilyScreen() {
+  document.getElementById("family-screen").style.display = "flex";
+  document.getElementById("main-screen").style.display = "none";
+  const snap = await db.collection("families")
+    .where("memberUids", "array-contains", currentUser.uid).get();
+  const listEl = document.getElementById("family-list");
+  listEl.innerHTML = "";
+  if (snap.empty) {
+    listEl.innerHTML = '<p class="meta">まだ参加している家系図はありません。</p>';
+  }
+  snap.forEach(doc => {
+    const div = document.createElement("div");
+    div.className = "family-item";
+    div.innerHTML = `<span>${doc.data().name}</span><button onclick="openFamily('${doc.id}','${doc.data().name}')">開く</button>`;
+    listEl.appendChild(div);
+  });
+}
+
+async function createFamily() {
+  const name = document.getElementById("new-family-name").value.trim();
+  if (!name) return alert("家系図の名前を入力してください");
+  const ref = await db.collection("families").add({
+    name, ownerUid: currentUser.uid, memberUids: [currentUser.uid],
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  openFamily(ref.id, name);
+}
+
+async function joinFamily() {
+  const code = document.getElementById("join-code").value.trim();
+  if (code.length !== 6) return alert("6桁のコードを入力してください");
+  const inviteRef = db.collection("invites").doc(code);
+  const inviteSnap = await inviteRef.get();
+  if (!inviteSnap.exists) return alert("無効なコードです");
+  const { familyId } = inviteSnap.data();
+  const familyRef = db.collection("families").doc(familyId);
+  await familyRef.update({
+    memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+  });
+  const familyDoc = await familyRef.get();
+  openFamily(familyId, familyDoc.data().name);
+}
+
+function openFamily(familyId, name) {
+  currentFamilyId = familyId;
+  document.getElementById("family-title").textContent = name;
+  document.getElementById("family-screen").style.display = "none";
+  document.getElementById("main-screen").style.display = "block";
+  listenToPeople();
+}
+
+function openInvitePanel() {
+  closeAllSheets();
+  document.getElementById("invite-sheet").classList.add("open");
+  document.getElementById("overlay").classList.add("open");
+}
+async function generateInviteCode() {
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  await db.collection("invites").doc(code).set({
+    familyId: currentFamilyId,
+    createdBy: currentUser.uid,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  document.getElementById("invite-code-text").textContent = code;
+}
+
+function listenToPeople() {
+  if (unsubscribePeople) unsubscribePeople();
+  unsubscribePeople = db.collection("families").doc(currentFamilyId)
+    .collection("people")
+    .onSnapshot(snap => {
+      peopleCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderTree(peopleCache);
+      populateSelectOptions();
+    });
+}
+
+function computeGenerations(people) {
+  const byId = Object.fromEntries(people.map(p => [p.id, p]));
+  const gen = {};
+  function resolve(id, seen) {
+    seen = seen || new Set();
+    if (gen[id] !== undefined) return gen[id];
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const p = byId[id];
+    const parentIds = (p.parentIds || []).filter(pid => byId[pid]);
+    if (parentIds.length === 0) { gen[id] = 0; return 0; }
+    const g = Math.max.apply(null, parentIds.map(pid => resolve(pid, seen))) + 1;
+    gen[id] = g;
+    return g;
+  }
+  people.forEach(p => resolve(p.id));
+  return gen;
+}
+
+function renderTree(people) {
+  const container = d3.select("#tree-container");
+  container.selectAll("*").remove();
+  if (people.length === 0) {
+    container.append("p").style("text-align","center").style("margin-top","60px")
+      .style("color","var(--text-secondary)").text("まだ人物が登録されていません。右下の＋から追加してください。");
+    return;
+  }
+
+  const byId = Object.fromEntries(people.map(p => [p.id, p]));
+  const gen = computeGenerations(people);
+  const maxGen = Math.max.apply(null, Object.values(gen));
+
+  const rows = [];
+  for (let g = 0; g <= maxGen; g++) rows.push(people.filter(p => gen[p.id] === g));
+  rows.forEach(row => {
+    const placed = new Set();
+    const ordered = [];
+    row.forEach(p => {
+      if (placed.has(p.id)) return;
+      ordered.push(p); placed.add(p.id);
+      (p.spouseIds || []).forEach(sid => {
+        if (byId[sid] && gen[sid] === gen[p.id] && !placed.has(sid)) {
+          ordered.push(byId[sid]); placed.add(sid);
+        }
+      });
+    });
+    row.length = 0; row.push.apply(row, ordered);
+  });
+
+  const nodeW = 148, nodeH = 60, colGap = 40, rowGap = 90;
+  const pos = {};
+  rows.forEach((row, g) => {
+    row.forEach((p, i) => {
+      pos[p.id] = { x: i * (nodeW + colGap), y: g * (nodeH + rowGap) };
+    });
+  });
+
+  const svgWidth = Math.max.apply(null, rows.map(r => r.length)) * (nodeW + colGap) + 200;
+  const svgHeight = (maxGen + 1) * (nodeH + rowGap) + 120;
+
+  const svg = container.append("svg").attr("viewBox", "0 0 " + svgWidth + " " + svgHeight);
+  const g_ = svg.append("g");
+  const zoom = d3.zoom().scaleExtent([0.3, 2.5]).on("zoom", function(e) { g_.attr("transform", e.transform); });
+  svg.call(zoom);
+  window._zoomRef = zoom; window._svgRef = svg;
+  svg.call(zoom.transform, d3.zoomIdentity.translate(60, 40).scale(0.85));
+
+  people.forEach(p => {
+    const parentIds = (p.parentIds || []).filter(pid => byId[pid]);
+    if (parentIds.length === 0) return;
+    const childPos = pos[p.id];
+    const parentX = parentIds.reduce((sum, pid) => sum + pos[pid].x, 0) / parentIds.length + nodeW/2;
+    const parentY = pos[parentIds[0]].y + nodeH;
+    g_.append("path").attr("class", "link")
+      .attr("d", d3.linkVertical()({ source: [parentX, parentY], target: [childPos.x + nodeW/2, childPos.y] }));
+  });
+
+  const drawnPairs = new Set();
+  people.forEach(p => {
+    (p.spouseIds || []).forEach(sid => {
+      if (!byId[sid]) return;
+      const key = [p.id, sid].sort().join("-");
+      if (drawnPairs.has(key)) return;
+      drawnPairs.add(key);
+      const a = pos[p.id], b = pos[sid];
+      g_.append("line").attr("class", "link")
+        .attr("x1", a.x + nodeW).attr("y1", a.y + nodeH/2)
+        .attr("x2", b.x).attr("y2", b.y + nodeH/2);
+    });
+  });
+
+  const nodeSel = g_.selectAll(".node-card").data(people).join("g")
+    .attr("class", "node-card")
+    .attr("transform", function(p) { return "translate(" + pos[p.id].x + "," + pos[p.id].y + ")"; })
+    .on("click", function(event, p) { openDetailPanel(p); });
+
+  nodeSel.append("rect").attr("width", nodeW).attr("height", nodeH).attr("rx", 12)
+    .attr("fill", function(p) { return p.gender === "F" ? "var(--female-bg)" : "var(--male-bg)"; })
+    .attr("stroke", function(p) { return p.gender === "F" ? "var(--female)" : "var(--male)"; });
+  nodeSel.append("text").attr("class", "avatar").attr("x", 14).attr("y", 32)
+    .text(function(p) { return p.gender === "F" ? "👩" : "👨"; });
+  nodeSel.append("text").attr("class", "name").attr("x", 44).attr("y", 26).text(function(p) { return p.name; });
+  nodeSel.append("text").attr("class", "years").attr("x", 44).attr("y", 44)
+    .text(function(p) { return p.born ? p.born + "年生" : ""; });
+}
+
+function zoomBy(factor) { window._svgRef.transition().duration(200).call(window._zoomRef.scaleBy, factor); }
+
+function closeAllSheets() {
+  document.querySelectorAll(".sheet").forEach(function(s) { s.classList.remove("open"); });
+  document.getElementById("overlay").classList.remove("open");
+}
+
+function openDetailPanel(p) {
+  editingPersonId = p.id;
+  document.getElementById("detail-sheet").classList.add("open");
+  document.getElementById("overlay").classList.add("open");
+  const isFemale = p.gender === "F";
+  const av = document.getElementById("panel-avatar");
+  av.style.background = isFemale ? "var(--female-bg)" : "var(--male-bg)";
+  av.style.color = isFemale ? "var(--female)" : "var(--male)";
+  av.textContent = isFemale ? "👩" : "👨";
+  document.getElementById("panel-name").textContent = p.name;
+  document.getElementById("panel-meta").textContent = p.born ? p.born + "年生" : "";
+  document.getElementById("panel-note").value = p.note || "";
+}
+
+function populateSelectOptions() {
+  ["edit-parent1", "edit-parent2", "edit-spouse"].forEach(function(id) {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = '<option value="">なし</option>';
+    peopleCache.forEach(function(p) {
+      const opt = document.createElement("option");
+      opt.value = p.id; opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    sel.value = current;
+  });
+}
+
+function openAddPanel() {
+  editingPersonId = null;
+  document.getElementById("edit-title").textContent = "人物を追加";
+  document.getElementById("edit-name").value = "";
+  document.getElementById("edit-gender").value = "M";
+  document.getElementById("edit-born").value = "";
+  document.getElementById("edit-parent1").value = "";
+  document.getElementById("edit-parent2").value = "";
+  document.getElementById("edit-spouse").value = "";
+  document.getElementById("edit-note").value = "";
+  closeAllSheets();
+  document.getElementById("edit-sheet").classList.add("open");
+  document.getElementById("overlay").classList.add("open");
+}
+
+function startEdit() {
+  const p = peopleCache.find(function(x) { return x.id === editingPersonId; });
+  document.getElementById("edit-title").textContent = "人物を編集";
+  document.getElementById("edit-name").value = p.name || "";
+  document.getElementById("edit-gender").value = p.gender || "M";
+  document.getElementById("edit-born").value = p.born || "";
+  document.getElementById("edit-parent1").value = (p.parentIds || [])[0] || "";
+  document.getElementById("edit-parent2").value = (p.parentIds || [])[1] || "";
+  document.getElementById("edit-spouse").value = (p.spouseIds || [])[0] || "";
+  document.getElementById("edit-note").value = p.note || "";
+  closeAllSheets();
+  document.getElementById("edit-sheet").classList.add("open");
+  document.getElementById("overlay").classList.add("open");
+}
+
+async function savePerson() {
+  const name = document.getElementById("edit-name").value.trim();
+  if (!name) return alert("名前を入力してください");
+  const parentIds = [document.getElementById("edit-parent1").value, document.getElementById("edit-parent2").value].filter(Boolean);
+  const spouseId = document.getElementById("edit-spouse").value;
+  const data = {
+    name: name,
+    gender: document.getElementById("edit-gender").value,
+    born: parseInt(document.getElementById("edit-born").value) || null,
+    note: document.getElementById("edit-note").value.trim(),
+    parentIds: parentIds,
+    spouseIds: spouseId ? [spouseId] : []
+  };
+  const peopleRef = db.collection("families").doc(currentFamilyId).collection("people");
+  let personId = editingPersonId;
+  if (personId) {
+    await peopleRef.doc(personId).update(data);
+  } else {
+    const ref = await peopleRef.add(data);
+    personId = ref.id;
+  }
+  if (spouseId) {
+    await peopleRef.doc(spouseId).update({
+      spouseIds: firebase.firestore.FieldValue.arrayUnion(personId)
+    });
+  }
+  closeAllSheets();
+}
+
+async function deletePerson() {
+  if (!confirm("この人物を削除しますか?")) return;
+  await db.collection("families").doc(currentFamilyId).collection("people").doc(editingPersonId).delete();
+  closeAllSheets();
+}
+</script>
+</body>
+</html>
