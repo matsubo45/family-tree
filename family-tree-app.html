@@ -211,13 +211,13 @@
 // Firebase設定 — 買い物リストアプリと同じプロジェクトのconfigに置き換えてください
 // =====================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyDZjqEqpvkyjlRujsU1Pg-o-AD23Xf2dRc",
-  authDomain: "family-tree-62bc9.firebaseapp.com",
-  projectId: "family-tree-62bc9",
-  storageBucket: "family-tree-62bc9.firebasestorage.app",
-  messagingSenderId: "365518144858",
-  appId: "1:365518144858:web:1e49e5e6c0442c1e5c5f63"
-  };
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -328,19 +328,33 @@ function listenToPeople() {
 function computeGenerations(people) {
   const byId = Object.fromEntries(people.map(p => [p.id, p]));
   const gen = {};
-  function resolve(id, seen) {
-    seen = seen || new Set();
-    if (gen[id] !== undefined) return gen[id];
-    if (seen.has(id)) return 0;
-    seen.add(id);
-    const p = byId[id];
-    const parentIds = (p.parentIds || []).filter(pid => byId[pid]);
-    if (parentIds.length === 0) { gen[id] = 0; return 0; }
-    const g = Math.max.apply(null, parentIds.map(pid => resolve(pid, seen))) + 1;
-    gen[id] = g;
-    return g;
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = people.length * 3 + 5;
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    people.forEach(p => {
+      if (gen[p.id] !== undefined) return;
+      const parentIds = (p.parentIds || []).filter(pid => byId[pid]);
+      if (parentIds.length > 0) {
+        if (parentIds.every(pid => gen[pid] !== undefined)) {
+          gen[p.id] = Math.max.apply(null, parentIds.map(pid => gen[pid])) + 1;
+          changed = true;
+        }
+      } else {
+        // 親の情報がない場合(結婚で入ってきた人など)は配偶者の世代に合わせる
+        const spouseIds = (p.spouseIds || []).filter(sid => byId[sid]);
+        const knownSpouseId = spouseIds.find(sid => gen[sid] !== undefined);
+        if (knownSpouseId !== undefined) {
+          gen[p.id] = gen[knownSpouseId];
+          changed = true;
+        }
+      }
+    });
   }
-  people.forEach(p => resolve(p.id));
+  // それでも解決しない場合(祖先世代など)は世代0とする
+  people.forEach(p => { if (gen[p.id] === undefined) gen[p.id] = 0; });
   return gen;
 }
 
@@ -359,27 +373,79 @@ function renderTree(people) {
 
   const rows = [];
   for (let g = 0; g <= maxGen; g++) rows.push(people.filter(p => gen[p.id] === g));
-  rows.forEach(row => {
+
+  const nodeW = 148, nodeH = 60, colGap = 40, rowGap = 110;
+  const pos = {};
+
+  rows.forEach((row, g) => {
     const placed = new Set();
     const ordered = [];
-    row.forEach(p => {
-      if (placed.has(p.id)) return;
-      ordered.push(p); placed.add(p.id);
-      (p.spouseIds || []).forEach(sid => {
-        if (byId[sid] && gen[sid] === gen[p.id] && !placed.has(sid)) {
-          ordered.push(byId[sid]); placed.add(sid);
+
+    if (g === 0) {
+      // 最上位世代: 配偶者を隣接させるだけ
+      row.forEach(p => {
+        if (placed.has(p.id)) return;
+        ordered.push(p); placed.add(p.id);
+        (p.spouseIds || []).forEach(sid => {
+          if (byId[sid] && gen[sid] === g && !placed.has(sid)) {
+            ordered.push(byId[sid]); placed.add(sid);
+          }
+        });
+      });
+    } else {
+      // 親の平均x位置でグループ化し、その順に並べることで線の交差を減らす
+      const groups = [];
+      const groupMap = {};
+      const noParent = [];
+      row.forEach(p => {
+        const parentIds = (p.parentIds || []).filter(pid => byId[pid] && pos[pid]);
+        if (parentIds.length > 0) {
+          const key = parentIds.slice().sort().join(",");
+          if (!groupMap[key]) {
+            const avgX = parentIds.reduce((s, pid) => s + pos[pid].x, 0) / parentIds.length;
+            groupMap[key] = { avgX: avgX, members: [] };
+            groups.push(groupMap[key]);
+          }
+          groupMap[key].members.push(p);
+        } else {
+          noParent.push(p);
         }
       });
+      groups.sort((a, b) => a.avgX - b.avgX);
+      groups.forEach(grp => {
+        grp.members.forEach(p => {
+          if (placed.has(p.id)) return;
+          ordered.push(p); placed.add(p.id);
+          (p.spouseIds || []).forEach(sid => {
+            if (byId[sid] && gen[sid] === g && !placed.has(sid)) {
+              ordered.push(byId[sid]); placed.add(sid);
+            }
+          });
+        });
+      });
+      noParent.forEach(p => {
+        if (placed.has(p.id)) return;
+        ordered.push(p); placed.add(p.id);
+        (p.spouseIds || []).forEach(sid => {
+          if (byId[sid] && gen[sid] === g && !placed.has(sid)) {
+            ordered.push(byId[sid]); placed.add(sid);
+          }
+        });
+      });
+    }
+
+    ordered.forEach((p, i) => {
+      pos[p.id] = { x: i * (nodeW + colGap), y: g * (nodeH + rowGap) };
     });
     row.length = 0; row.push.apply(row, ordered);
   });
 
-  const nodeW = 148, nodeH = 60, colGap = 40, rowGap = 90;
-  const pos = {};
+  // 各世代を中央揃えにする
+  const rowWidths = rows.map(row => row.length ? (pos[row[row.length - 1].id].x + nodeW) : 0);
+  const maxRowWidth = Math.max.apply(null, rowWidths);
   rows.forEach((row, g) => {
-    row.forEach((p, i) => {
-      pos[p.id] = { x: i * (nodeW + colGap), y: g * (nodeH + rowGap) };
-    });
+    const shift = (maxRowWidth - rowWidths[g]) / 2;
+    row.forEach(p => { pos[p.id].x += shift; });
   });
 
   const svgWidth = Math.max.apply(null, rows.map(r => r.length)) * (nodeW + colGap) + 200;
