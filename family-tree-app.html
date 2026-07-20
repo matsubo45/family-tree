@@ -211,12 +211,12 @@
 // Firebase設定 — 買い物リストアプリと同じプロジェクトのconfigに置き換えてください
 // =====================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyDZjqEqpvkyjlRujsU1Pg-o-AD23Xf2dRc",
-  authDomain: "family-tree-62bc9.firebaseapp.com",
-  projectId: "family-tree-62bc9",
-  storageBucket: "family-tree-62bc9.firebasestorage.app",
-  messagingSenderId: "365518144858",
-  appId: "1:365518144858:web:1e49e5e6c0442c1e5c5f63"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -529,18 +529,47 @@ function openDetailPanel(p) {
   document.getElementById("panel-note").value = p.note || "";
 }
 
-function populateSelectOptions() {
-  ["edit-parent1", "edit-parent2", "edit-spouse"].forEach(function(id) {
+function getSurname(fullName) {
+  if (!fullName) return null;
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return null; // スペースがなければ苗字は判定しない
+  return parts[0];
+}
+
+function updateParentSelectOptions(forceIds) {
+  forceIds = forceIds || [];
+  const nameVal = document.getElementById("edit-name").value;
+  const surname = getSurname(nameVal);
+  ["edit-parent1", "edit-parent2"].forEach(function(id) {
     const sel = document.getElementById(id);
     const current = sel.value;
+    let list = peopleCache;
+    if (surname) {
+      list = peopleCache.filter(function(p) {
+        return getSurname(p.name) === surname || p.id === current || forceIds.indexOf(p.id) !== -1;
+      });
+    }
     sel.innerHTML = '<option value="">なし</option>';
-    peopleCache.forEach(function(p) {
+    list.forEach(function(p) {
       const opt = document.createElement("option");
       opt.value = p.id; opt.textContent = p.name;
       sel.appendChild(opt);
     });
     sel.value = current;
   });
+}
+
+function populateSelectOptions() {
+  const sel = document.getElementById("edit-spouse");
+  const current = sel.value;
+  sel.innerHTML = '<option value="">なし</option>';
+  peopleCache.forEach(function(p) {
+    const opt = document.createElement("option");
+    opt.value = p.id; opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+  updateParentSelectOptions();
 }
 
 function openAddPanel() {
@@ -564,6 +593,7 @@ function startEdit() {
   document.getElementById("edit-name").value = p.name || "";
   document.getElementById("edit-gender").value = p.gender || "M";
   document.getElementById("edit-born").value = p.born || "";
+  updateParentSelectOptions(p.parentIds || []);
   document.getElementById("edit-parent1").value = (p.parentIds || [])[0] || "";
   document.getElementById("edit-parent2").value = (p.parentIds || [])[1] || "";
   document.getElementById("edit-spouse").value = (p.spouseIds || [])[0] || "";
@@ -607,6 +637,10 @@ async function deletePerson() {
   await db.collection("families").doc(currentFamilyId).collection("people").doc(editingPersonId).delete();
   closeAllSheets();
 }
+
+document.getElementById("edit-name").addEventListener("input", function() {
+  updateParentSelectOptions();
+});
 </script>
 </body>
 </html>
